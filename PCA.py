@@ -274,20 +274,7 @@ plot_scores_scatter(T_C, months)
 plot_pc1_timeseries(T_C)
 
 # %%
-# BLOCK 7 (optional) — Outlier diagnostics (Hotelling T² & SPE/Q)
-# What this block does: quantifies "how unusual" each hour is in- and out-of-subspace.
-# T²: distance inside PC space; Q: residual outside PC space. Great slide to discuss anomalies.
-# Next: tiny text summary (one slide).
-ev = np.var(T_C, axis=0, ddof=1)
-T2 = (T_C**2 / ev).sum(axis=1)
-Zresid = Z - Zrec_C
-Q = np.sum(Zresid**2, axis=1)
-
-plt.figure(); plt.plot(T2); plt.title("Hotelling T² (EM-PCA)"); plt.tight_layout(); plt.show()
-plt.figure(); plt.plot(Q);  plt.title("SPE / Q residual (EM-PCA)"); plt.tight_layout(); plt.show()
-
-# %%
-# BLOCK 8 — Summary (print-ready bullets for slide notes)
+# BLOCK 7 — Summary (print-ready bullets for slide notes)
 # What this block does: prints the one-liners you can read on a slide.
 print("\n=== One-liners for the talk ===")
 print("• We converted -200→NaN, hid 10% known cells, then compared three pipelines.")
