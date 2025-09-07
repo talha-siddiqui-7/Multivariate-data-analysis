@@ -3,7 +3,7 @@
 # Blocked, narrated pipeline for a talk/demo:
 # 1) Load & clean  →  2) Standardize + test-mask  →  3) PCA pipelines
 # 4) Run & reconstruct  →  5) Metrics (RMSE & Std-RMSE)  →  6) Plots
-# 7) (Optional) Outlier diagnostics  →  8) Summary
+# 7) Summary
 # Next block: imports, config, and reproducibility.
 
 # %%
