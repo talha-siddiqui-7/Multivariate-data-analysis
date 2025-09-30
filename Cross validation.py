@@ -1,27 +1,71 @@
-# choose_splits_multi_k.py
-# Compare Hold-out vs LOOCV vs multiple StratifiedKFold(k) settings on Breast Cancer dataset
-# Saves: one plot per k (bar chart mean ± std) + a CSV summary
+# cv_comparison_penguins_fixed2.py
+# Compare KFold, StratifiedKFold, GroupKFold (real groups), LOOCV, LeavePOut
+# Dataset: Palmer Penguins via OpenML (groups = island)
+# Saves: cv_methods_comparison_penguins.png and .csv
 
 import time
 import numpy as np
 import pandas as pd
-import matplotlib
-matplotlib.use("Agg")  # headless (no GUI)
 import matplotlib.pyplot as plt
+import textwrap
+import warnings
 
-from sklearn.datasets import load_breast_cancer
-from sklearn.model_selection import train_test_split, StratifiedKFold, LeaveOneOut, cross_val_score
+from sklearn.datasets import fetch_openml
+from sklearn.model_selection import (
+    KFold, StratifiedKFold, GroupKFold, LeaveOneOut, LeavePOut, cross_val_score
+)
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score
+
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 # -----------------------------
-# Config
+# Load dataset (Palmer Penguins)
 # -----------------------------
-K_LIST = [3, 5, 7, 10]   # <- choose the k values you want to demo
-TEST_SIZE = 0.20
-RANDOM_STATE = 42
+peng = fetch_openml("penguins", version=1, as_frame=True)  # needs internet on 1st run
+df = peng.frame
+
+# Normalize column names (OpenML variants)
+df = df.rename(columns={
+    "culmen_length_mm": "bill_length_mm",
+    "culmen_depth_mm": "bill_depth_mm",
+})
+
+needed = {
+    "species", "island", "bill_length_mm", "bill_depth_mm",
+    "flipper_length_mm", "body_mass_g", "sex",
+}
+missing = needed - set(df.columns)
+if missing:
+    raise KeyError(f"Dataset columns missing: {missing}. Columns found: {list(df.columns)}")
+
+# Drop missing rows to keep demo simple
+df = df[list(needed)].dropna().reset_index(drop=True)
+
+# Target, groups, features
+y = df["species"]
+groups = df["island"]
+X = df.drop(columns=["species", "island"])
+
+numeric_features = ["bill_length_mm", "bill_depth_mm", "flipper_length_mm", "body_mass_g"]
+categorical_features = ["sex"]
+
+# -----------------------------
+# Build pipeline (preprocess + model)
+# -----------------------------
+preproc = ColumnTransformer(
+    transformers=[
+        ("num", StandardScaler(), numeric_features),
+        ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_features),
+    ]
+)
+
+clf_pipe = Pipeline([
+    ("preproc", preproc),
+    ("clf", LogisticRegression(max_iter=2000, solver="lbfgs")),
+])
 
 # -----------------------------
 # Helpers
@@ -36,116 +80,74 @@ def summarize_scores(name, scores, start_time):
         "time_sec": duration,
     }
 
-def barplot_mean_std(methods, means, stds, title, outpath):
-    x = np.arange(len(methods))
-    plt.figure(figsize=(7.5, 4.2))
-    plt.bar(x, means, yerr=stds, capsize=6)
-    plt.xticks(x, methods, rotation=0)
-    plt.ylabel("Accuracy (mean ± std)")
-    plt.title(title)
-    plt.tight_layout()
-    plt.savefig(outpath, dpi=150)
-    plt.close()
+def barplot_mean_std(df_plot, title, outpath):
+    fig, ax = plt.subplots(figsize=(10.5, 5))
+    labels = ["\n".join(textwrap.wrap(m, width=18)) for m in df_plot["method"]]
+    ax.bar(labels, df_plot["mean"], yerr=df_plot["std"], capsize=6)
+    ax.set_ylabel("Accuracy (mean ± std)")
+    ax.set_title(title)
+    ax.tick_params(axis="x", labelsize=10)
+    ax.yaxis.grid(True, linestyle="--", alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(outpath, dpi=180, bbox_inches="tight")
+    plt.close(fig)
 
 # -----------------------------
-# Data + model (pipeline to avoid leakage)
+# Run all CV methods
 # -----------------------------
-X, y = load_breast_cancer(return_X_y=True, as_frame=True)
-clf_pipe = Pipeline([
-    ("scaler", StandardScaler()),
-    ("clf", LogisticRegression(max_iter=1000, solver="lbfgs")),
-])
+summaries = []
 
-# -----------------------------
-# Baseline: Hold-out (single split)
-# -----------------------------
-t0 = time.time()
-X_tr, X_te, y_tr, y_te = train_test_split(
-    X, y, test_size=TEST_SIZE, shuffle=True, random_state=RANDOM_STATE
-)
-clf_pipe.fit(X_tr, y_tr)
-y_hat = clf_pipe.predict(X_te)
-holdout_acc = accuracy_score(y_te, y_hat)
-holdout_summary = summarize_scores(
-    f"Hold-out ({int((1-TEST_SIZE)*100)}/{int(TEST_SIZE*100)})",
-    np.array([holdout_acc]),
-    t0
-)
+# 1) K-Fold (k=5)
+start = time.time()
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+kf_scores = cross_val_score(clf_pipe, X, y, cv=kf, scoring="accuracy")
+summaries.append(summarize_scores("KFold (k=5)", kf_scores, start))
 
-# -----------------------------
-# LOOCV (constant across k)
-# -----------------------------
-t0 = time.time()
+# 2) Stratified K-Fold (k=5)
+start = time.time()
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+skf_scores = cross_val_score(clf_pipe, X, y, cv=skf, scoring="accuracy")
+summaries.append(summarize_scores("StratifiedKFold (k=5)", skf_scores, start))
+
+# 3) Group K-Fold (k= min(5, n_groups)) using REAL groups = island
+n_groups = groups.nunique()
+gkf_splits = min(5, n_groups)
+start = time.time()
+gkf = GroupKFold(n_splits=gkf_splits)
+gkf_scores = cross_val_score(clf_pipe, X, y, cv=gkf, groups=groups, scoring="accuracy")
+summaries.append(summarize_scores(f"GroupKFold (k={gkf_splits}, groups=island)", gkf_scores, start))
+
+# 4) LOOCV
+start = time.time()
 loo = LeaveOneOut()
 loo_scores = cross_val_score(clf_pipe, X, y, cv=loo, scoring="accuracy")
-loo_summary = summarize_scores("LOOCV", loo_scores, t0)
+summaries.append(summarize_scores("LOOCV", loo_scores, start))
+
+# 5) Leave-P-Out (p=2) — limited subsamples for speed
+start = time.time()
+lpo = LeavePOut(p=2)
+scores = []
+for i, (tr_idx, te_idx) in enumerate(lpo.split(X, y)):
+    if i >= 200:  # cap for runtime; raise if you want more
+        break
+    clf_pipe.fit(X.iloc[tr_idx], y.iloc[tr_idx])
+    scores.append(clf_pipe.score(X.iloc[te_idx], y.iloc[te_idx]))
+lpo_scores = np.array(scores)
+summaries.append(summarize_scores("LeavePOut (p=2, 200 subsamples)", lpo_scores, start))
 
 # -----------------------------
-# Loop over StratifiedKFold(k) values
+# Results
 # -----------------------------
-rows = []
-plots = []
-for k in K_LIST:
-    # Stratified K-Fold with this k
-    t0 = time.time()
-    skf = StratifiedKFold(n_splits=k, shuffle=True, random_state=RANDOM_STATE)
-    skf_scores = cross_val_score(clf_pipe, X, y, cv=skf, scoring="accuracy")
-    skf_summary = summarize_scores(f"StratifiedKFold (k={k})", skf_scores, t0)
+summary_df = pd.DataFrame(summaries)
+print("\n=== Cross-validation comparison (Palmer Penguins) ===")
+print(summary_df.round(4))
 
-    # Collect rows for master table
-    rows.append({
-        "variant": f"k={k}",
-        "method": holdout_summary["method"],
-        "mean": holdout_summary["mean"],
-        "std": holdout_summary["std"],
-        "n_folds": holdout_summary["n_folds"],
-        "time_sec": holdout_summary["time_sec"],
-    })
-    rows.append({
-        "variant": f"k={k}",
-        "method": skf_summary["method"],
-        "mean": skf_summary["mean"],
-        "std": skf_summary["std"],
-        "n_folds": skf_summary["n_folds"],
-        "time_sec": skf_summary["time_sec"],
-    })
-    rows.append({
-        "variant": f"k={k}",
-        "method": loo_summary["method"],
-        "mean": loo_summary["mean"],
-        "std": loo_summary["std"],
-        "n_folds": loo_summary["n_folds"],
-        "time_sec": loo_summary["time_sec"],
-    })
+barplot_mean_std(
+    summary_df,
+    f"CV Methods Comparison — Penguins (target=species, groups=island; GroupKFold k={gkf_splits})",
+    "cv_methods_comparison_penguins.png"
+)
+print("\nSaved plot -> cv_methods_comparison_penguins.png")
 
-    # Make a per-k comparison plot (Hold-out vs Stratified k vs LOOCV)
-    methods = [holdout_summary["method"], skf_summary["method"], loo_summary["method"]]
-    means   = [holdout_summary["mean"],   skf_summary["mean"],   loo_summary["mean"]]
-    stds    = [holdout_summary["std"],    skf_summary["std"],    loo_summary["std"]]
-    out_png = f"classification_comparison_k{k}.png"
-    title   = f"Breast Cancer — Split Methods Comparison (k={k})"
-    barplot_mean_std(methods, means, stds, title, out_png)
-    plots.append(out_png)
-    print(f"Saved plot -> {out_png}")
-
-# -----------------------------
-# Save a consolidated summary
-# -----------------------------
-summary_df = pd.DataFrame(rows)
-summary_csv = "classification_split_summary.csv"
-summary_df.to_csv(summary_csv, index=False)
-print(f"\nSaved summary -> {summary_csv}")
-
-# Pretty print per-k block in console
-for k in K_LIST:
-    block = summary_df[summary_df["variant"] == f"k={k}"].copy()
-    print("\n" + "="*40)
-    print(f"Variant k={k}")
-    print("="*40)
-    for _, r in block.iterrows():
-        print(f"{r['method']:<24} | mean={r['mean']:.4f}  std={r['std']:.4f}  folds={int(r['n_folds'])}  time={r['time_sec']:.2f}s")
-
-print("\nArtifacts saved:")
-for p in plots:
-    print(f"  - {p}")
-print(f"  - {summary_csv}")
+summary_df.round(6).to_csv("cv_methods_comparison_penguins.csv", index=False)
+print("Saved table -> cv_methods_comparison_penguins.csv")
