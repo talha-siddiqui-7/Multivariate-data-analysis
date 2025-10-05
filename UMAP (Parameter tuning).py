@@ -1,5 +1,7 @@
-# --- Setup
-
+# The penguins dataset (from seaborn) contains measurements for three penguin species:
+# Adelie, Chinstrap, and Gentoo. It includes features such as bill length, bill depth,
+# flipper length, and body mass, collected from Palmer Archipelago in Antarctica.
+# This dataset is often used for demonstrating clustering, visualization, and classification tasks.
 
 import numpy as np
 import pandas as pd
