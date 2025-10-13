@@ -1,0 +1,6 @@
+method,mean,std,n_folds,time_sec
+KFold (k=5),0.993985,0.007368,5,0.110574
+StratifiedKFold (k=5),0.99403,0.01194,5,0.088286
+"GroupKFold (k=3, groups=island)",0.571816,0.311453,3,0.028986
+LOOCV,0.994012,0.07715,334,2.606897
+"LeavePOut (p=2, 200 subsamples)",0.995,0.049749,200,1.42795
